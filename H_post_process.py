@@ -1,20 +1,25 @@
 """
 Post-processing module for 2D FEM elastic analysis.
 
-Provides 19 functions following the naming convention:
+Provides 27 functions following the naming convention:
     {target}_{mode}
 
 target:  displacement | stress | principal_stress | mises
-mode:    point | line | max | min | absmin
+mode:    point | line | max | min | absmin | boundary_mean | boundary_line
 
 Calling convention:
     target_mode(location, grid_path, disp_path, E=..., niu=...)
 
-    - point:   target_point(x, y, grid_path, disp_path, ...)
-    - line:    target_line(x1, y1, x2, y2, grid_path, disp_path, ...)
-               -> saves a plot to case/ and returns data arrays
-    - max:     target_max(grid_path, disp_path, ...)
-    - min:     target_min(grid_path, disp_path, ...)
+    - point:         target_point(x, y, grid_path, disp_path, ...)
+    - line:          target_line(x1, y1, x2, y2, grid_path, disp_path, ...)
+                     -> saves a plot to case/ and returns data arrays
+    - max:           target_max(grid_path, disp_path, ...)
+    - min:           target_min(grid_path, disp_path, ...)
+    - absmin:        target_absmin(grid_path, disp_path, ...)
+    - boundary_mean: target_boundary_mean(start, end, grid_path, disp_path, ...)
+                     -> length-weighted average along boundary linked list
+    - boundary_line: target_boundary_line(start, end, x_axis, grid_path, ...)
+                     -> plot along boundary, x-axis: s | x | y, with arrows
 
 After running E_main.py, simply import from test.py and call directly.
 """
@@ -195,6 +200,348 @@ def _global_extremum(g, U, E, niu, value_fn, mode, label):
     return cx, cy, val
 
 
+def _boundary_mean(g, U, E, niu, start, end, link_dict, value_fn, n_pts=3):
+    """
+    Length-weighted mean of a quantity along a boundary segment.
+
+    Traverses the boundary linked list from start → end.
+    n_pts=1 : midpoint rule (1 sample per edge)
+    n_pts=3 : Simpson rule (endpoints + midpoint, weights 1:4:1)
+
+    value_fn: (g, U, x, y, E, niu) -> float | tuple | None
+    Returns: scalar or tuple of component means (None if no valid data)
+    """
+    # collect sample points with integration weights along the chain
+    samples = []   # (x, y, weight)
+    p = start
+    total_length = 0.0
+    while p != end:
+        q = link_dict.get(p)
+        if q is None:
+            break
+        vp = g.vertices[p]
+        vq = g.vertices[q]
+        length = np.hypot(vp.x - vq.x, vp.y - vq.y)
+
+        if n_pts == 3:
+            mid_x = (vp.x + vq.x) * 0.5
+            mid_y = (vp.y + vq.y) * 0.5
+            samples.append((vp.x, vp.y, length / 6.0))
+            samples.append((mid_x, mid_y, 4.0 * length / 6.0))
+            samples.append((vq.x, vq.y, length / 6.0))
+        else:  # midpoint only
+            mid_x = (vp.x + vq.x) * 0.5
+            mid_y = (vp.y + vq.y) * 0.5
+            samples.append((mid_x, mid_y, length))
+
+        total_length += length
+        p = q
+
+    if total_length == 0.0:
+        return None
+
+    # accumulate weighted sum
+    n_comps = None
+    weighted_sum = None
+    for x, y, w in samples:
+        v = value_fn(g, U, x, y, E, niu)
+        if v is None:
+            continue
+        if not isinstance(v, (tuple, list, np.ndarray)):
+            v = (v,)
+        if n_comps is None:
+            n_comps = len(v)
+            weighted_sum = [0.0] * n_comps
+        for i in range(n_comps):
+            weighted_sum[i] += v[i] * w
+
+    if weighted_sum is None:
+        return None
+
+    means = tuple(s / total_length for s in weighted_sum)
+    return means[0] if n_comps == 1 else means
+
+
+def _load_link_dict(link_path='case/boun_link.npz'):
+    """Load boundary linked-list dictionary from npz file."""
+    data = np.load(link_path)
+    return {u: v for u, v in data['link']}
+
+
+def _boundary_sample(g, U, E, niu, start, end, link_dict, value_fn):
+    """
+    Sample a quantity at every boundary node along the linked-list chain.
+
+    Returns: (xs, ys, ss, data_arrays)
+      xs, ys: coordinates of sample points (in traversal order)
+      ss:     cumulative arc length from start
+      data_arrays: list of np.ndarray, one per component
+    """
+    # collect node indices in traversal order
+    node_ids = [start]
+    p = start
+    while p != end:
+        q = link_dict.get(p)
+        if q is None:
+            break
+        node_ids.append(q)
+        p = q
+
+    # sample at each node
+    xs, ys, ss = [], [], []
+    val_lists = None
+    n_comps = None
+    cum_s = 0.0
+    px = py = None
+
+    for k, nid in enumerate(node_ids):
+        v = g.vertices[nid]
+        if k > 0:
+            cum_s += np.hypot(v.x - px, v.y - py)
+        xs.append(v.x)
+        ys.append(v.y)
+        ss.append(cum_s)
+        px, py = v.x, v.y
+
+        val = value_fn(g, U, v.x, v.y, E, niu)
+        if val is not None:
+            if not isinstance(val, (tuple, list, np.ndarray)):
+                val = (val,)
+            if n_comps is None:
+                n_comps = len(val)
+                val_lists = [[] for _ in range(n_comps)]
+            for j in range(n_comps):
+                val_lists[j].append(val[j])
+        else:
+            if val_lists is not None:
+                for lst in val_lists:
+                    lst.append(np.nan)
+
+    if val_lists is None:
+        return np.array(xs), np.array(ys), np.array(ss), []
+    return (np.array(xs), np.array(ys), np.array(ss),
+            [np.array(lst) for lst in val_lists])
+
+
+def _add_boundary_arrows(ax, xs, ys, ss, n_arrows=12, color='black'):
+    """Add direction arrows at regular arc-length intervals along a polyline."""
+    if len(xs) < 2 or n_arrows <= 0:
+        return
+    total_s = ss[-1]
+    if total_s <= 0:
+        return
+    for s_target in np.linspace(total_s * 0.05, total_s * 0.95, n_arrows):
+        # locate segment containing s_target
+        for i in range(len(ss) - 1):
+            if ss[i] <= s_target <= ss[i + 1]:
+                seg_len = ss[i + 1] - ss[i]
+                if seg_len <= 0:
+                    break
+                t = (s_target - ss[i]) / seg_len
+                x = xs[i] + t * (xs[i + 1] - xs[i])
+                y = ys[i] + t * (ys[i + 1] - ys[i])
+                dx = xs[i + 1] - xs[i]
+                dy = ys[i + 1] - ys[i]
+                length = np.hypot(dx, dy)
+                if length > 0:
+                    dx /= length; dy /= length
+                    ax.annotate('', xy=(x + dx * 0.02, y + dy * 0.02),
+                                xytext=(x - dx * 0.02, y - dy * 0.02),
+                                arrowprops=dict(arrowstyle='->', color=color,
+                                                lw=1.2, alpha=0.7))
+                break
+
+
+def _boundary_line_plot(start, end, xs, ys, ss,
+                        data_arrays, labels, title, filename, x_axis):
+    """Save a boundary line-plot with arrows. x_axis: 's' | 'x' | 'y'."""
+    # ============ X-AXIS SWITCH ============
+    #  x_data / x_label  →  horizontal axis of the line plot.
+    #  To customise (e.g. angle = y / R):
+    #     x_data = ys / R
+    #     x_label = 'angle'
+    # ========================================
+    if x_axis == 's':
+        x_data = ss
+        x_label = 'arc length s'
+    elif x_axis == 'x':
+        x_data = xs
+        x_label = 'x'
+    else:
+        x_data = ys
+        x_label = 'y'
+
+    n = len(data_arrays)
+    _, axes = plt.subplots(n, 1, figsize=(10, 2.8 * n), sharex=True)
+    if n == 1:
+        axes = [axes]
+
+    for i, (arr, lbl) in enumerate(zip(data_arrays, labels)):
+        # connect adjacent sample points in traversal order
+        axes[i].plot(x_data, arr, 'o-', linewidth=1.2, markersize=3, label=lbl)
+        axes[i].set_ylabel(lbl)
+        axes[i].grid(True, alpha=0.3)
+        # add direction arrows at midpoints
+        _add_boundary_arrows(axes[i], x_data, arr, ss if x_axis == 's'
+                             else np.arange(len(x_data)))
+
+    axes[-1].set_xlabel(x_label)
+    axes[0].set_title(title + f'  (boundary {start}->{end})')
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Plot saved to {filename}")
+
+
+def _boundary_sample_edge(g, U, E, niu, start, end, link_dict, value_fn):
+    """
+    Sample at each boundary edge midpoint — correct for stress-type
+    quantities that are constant per element but jump at nodes.
+
+    Returns: (s_starts, s_ends, x0, x1, y0, y1, data_arrays)
+      s_starts / s_ends: arc-length bounds of each edge
+      x0 / x1: x-coordinate of edge start / end node
+      y0 / y1: y-coordinate of edge start / end node
+      data_arrays: list of np.ndarray, one value per edge
+    """
+    s_starts, s_ends = [], []
+    x0, x1, y0, y1 = [], [], [], []
+    val_lists = None
+    n_comps = None
+    cum_s = 0.0
+    p = start
+
+    while p != end:
+        q = link_dict.get(p)
+        if q is None:
+            break
+        vp = g.vertices[p]
+        vq = g.vertices[q]
+        length = np.hypot(vp.x - vq.x, vp.y - vq.y)
+        mid_x = (vp.x + vq.x) * 0.5
+        mid_y = (vp.y + vq.y) * 0.5
+
+        s_starts.append(cum_s)
+        cum_s += length
+        s_ends.append(cum_s)
+        x0.append(vp.x)
+        x1.append(vq.x)
+        y0.append(vp.y)
+        y1.append(vq.y)
+
+        val = value_fn(g, U, mid_x, mid_y, E, niu)
+        if val is not None:
+            if not isinstance(val, (tuple, list, np.ndarray)):
+                val = (val,)
+            if n_comps is None:
+                n_comps = len(val)
+                val_lists = [[] for _ in range(n_comps)]
+            for j in range(n_comps):
+                val_lists[j].append(val[j])
+        else:
+            if val_lists is not None:
+                for lst in val_lists:
+                    lst.append(np.nan)
+
+        p = q
+
+    if val_lists is None:
+        return (np.array([]), np.array([]), np.array([]), np.array([]),
+                np.array([]), np.array([]), [])
+    return (np.array(s_starts), np.array(s_ends),
+            np.array(x0), np.array(x1), np.array(y0), np.array(y1),
+            [np.array(lst) for lst in val_lists])
+
+
+def _boundary_edge_plot(start, end, s_starts, s_ends, x0, x1, y0, y1,
+                        data_arrays, labels, title, filename, x_axis):
+    """
+    Boundary step plot — constant value across each edge, jump at node.
+    x_axis: 's' (arc length) | 'x' | 'y'
+    """
+    n_edges = len(s_starts)
+    if n_edges == 0:
+        return
+
+    # ============ X-AXIS SWITCH ============
+    #  x_left / x_right → step-segment left & right endpoints on the x-axis.
+    #  arrow_span       → direction of traversal arrows (+→right, -→left).
+    #  x_label          → axis title.
+    #
+    #  To customise (e.g. angle = y_mid / R, arc-length weighted):
+    #     x_left  = y0 / R          # start-node angle
+    #     x_right = y1 / R          # end-node angle
+    #     x_label = 'angle'
+    #     arrow_span = x_right - x_left
+    #
+    #  To customise (e.g. plot vs edge index):
+    #     x_left  = np.arange(n_edges)
+    #     x_right = np.arange(n_edges) + 1
+    #     x_label = 'edge index'
+    #     arrow_span = np.ones(n_edges)
+    # ========================================
+    if x_axis == 's':
+        x_left = s_starts
+        x_right = s_ends
+        x_label = 'arc length s'
+        arrow_span = s_ends - s_starts
+    elif x_axis == 'x':
+        x_left = x0
+        x_right = x1
+        x_label = 'x'
+        arrow_span = x1 - x0
+    else:  # 'y'
+        x_left = y0
+        x_right = y1
+        x_label = 'y'
+        arrow_span = y1 - y0
+
+    # interleave: [L0, R0, L1, R1, ...] for step drawing
+    x_step = np.empty(2 * n_edges)
+    for i in range(n_edges):
+        x_step[2 * i] = x_left[i]
+        x_step[2 * i + 1] = x_right[i]
+
+    n = len(data_arrays)
+    _, axes = plt.subplots(n, 1, figsize=(10, 2.8 * n), sharex=True)
+    if n == 1:
+        axes = [axes]
+
+    for i, (vals, lbl) in enumerate(zip(data_arrays, labels)):
+        y_step = np.empty(2 * n_edges)
+        for j in range(n_edges):
+            y_step[2 * j] = vals[j]
+            y_step[2 * j + 1] = vals[j]
+
+        axes[i].plot(x_step, y_step, '-', linewidth=1.2, label=lbl)
+        axes[i].set_ylabel(lbl)
+        axes[i].grid(True, alpha=0.3)
+
+        # arrows at midpoints, pointing along traversal direction
+        if n_edges >= 2:
+            stp = max(1, n_edges // 10)
+            for j in range(0, n_edges, stp):
+                mx = 0.5 * (x_left[j] + x_right[j])
+                dx = arrow_span[j]
+                if dx >= 0:
+                    axes[i].annotate('', xy=(mx + 0.005, vals[j]),
+                                     xytext=(mx - 0.005, vals[j]),
+                                     arrowprops=dict(arrowstyle='->', color='black',
+                                                     lw=1.2, alpha=0.6))
+                else:
+                    axes[i].annotate('', xy=(mx - 0.005, vals[j]),
+                                     xytext=(mx + 0.005, vals[j]),
+                                     arrowprops=dict(arrowstyle='->', color='black',
+                                                     lw=1.2, alpha=0.6))
+
+    axes[-1].set_xlabel(x_label)
+    axes[0].set_title(title + f'  (boundary {start}->{end})')
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Plot saved to {filename}")
+
+
 # ============================================================
 # Public API — displacement
 # ============================================================
@@ -208,8 +555,9 @@ def displacement_point(x, y, grid_path='case/grid.npz',
         print(f"Point ({x}, {y}) is outside the mesh.")
         return None, None
     u, v = uv
-    print(f"Displacement at ({x}, {y}): u = {u:.6e}, v = {v:.6e}")
-    return u, v
+    mag = np.sqrt(u**2 + v**2)
+    print(f"Displacement at ({x}, {y}): u = {u:.6e}, v = {v:.6e}, |u| = {mag:.6e}")
+    return u, v, mag
 
 
 def displacement_line(x1, y1, x2, y2,
@@ -637,6 +985,209 @@ def mises_absmin(grid_path='case/grid.npz',
     """Print global absolute-minimum (non-zero) von Mises stress over all elements."""
     g, U = _load(grid_path, disp_path)
     return _global_extremum(g, U, E, niu, _mises_at_point, 'absmin', 'Von Mises')
+
+
+# ============================================================
+# Public API — boundary mean (length-weighted)
+# ============================================================
+
+def displacement_boundary_mean(start, end,
+                                grid_path='case/grid.npz',
+                                disp_path='case/DisplacementResult.npz',
+                                link_path='case/boun_link.npz'):
+    """Print length-weighted mean displacement (u, v, |u|) along a boundary segment."""
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    def _uv(g, U, x, y, E, niu):
+        return interpolate_displacement(g, U, x, y)
+
+    def _mag(g, U, x, y, E, niu):
+        uv = interpolate_displacement(g, U, x, y)
+        if uv is None:
+            return None
+        return np.sqrt(uv[0]**2 + uv[1]**2)
+
+    result = _boundary_mean(g, U, 200e9, 0.3, start, end, link_dict, _uv)
+    mag_mean = _boundary_mean(g, U, 200e9, 0.3, start, end, link_dict, _mag)
+    if result is None:
+        print(f"No valid displacement data on boundary ({start}->{end}).")
+        return None, None, None
+    u_mean, v_mean = result
+    print(f"Boundary mean displacement ({start}->{end}):"
+          f" u_avg = {u_mean:.6e}, v_avg = {v_mean:.6e},"
+          f" |u|_avg = {mag_mean:.6e}")
+    return u_mean, v_mean, mag_mean
+
+
+def stress_boundary_mean(start, end,
+                          grid_path='case/grid.npz',
+                          disp_path='case/DisplacementResult.npz',
+                          E=200e9, niu=0.3,
+                          link_path='case/boun_link.npz'):
+    """Print length-weighted mean stress (sigma_x, sigma_y, tau_xy) along a boundary segment."""
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    result = _boundary_mean(g, U, E, niu, start, end, link_dict, _stress_at_point)
+    if result is None:
+        print(f"No valid stress data on boundary ({start}->{end}).")
+        return None, None, None
+    sx_mean, sy_mean, txy_mean = result
+    print(f"Boundary mean stress ({start}->{end}):"
+          f" sigma_x_avg = {sx_mean:.6e}, sigma_y_avg = {sy_mean:.6e},"
+          f" tau_xy_avg = {txy_mean:.6e}")
+    return sx_mean, sy_mean, txy_mean
+
+
+def principal_stress_boundary_mean(start, end,
+                                    grid_path='case/grid.npz',
+                                    disp_path='case/DisplacementResult.npz',
+                                    E=200e9, niu=0.3,
+                                    link_path='case/boun_link.npz'):
+    """Print length-weighted mean principal stresses (sigma_1, sigma_2) along a boundary segment."""
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    result = _boundary_mean(g, U, E, niu, start, end, link_dict, _principal_at_point)
+    if result is None:
+        print(f"No valid principal stress data on boundary ({start}->{end}).")
+        return None, None
+    s1_mean, s2_mean = result
+    print(f"Boundary mean principal stress ({start}->{end}):"
+          f" sigma_1_avg = {s1_mean:.6e}, sigma_2_avg = {s2_mean:.6e}")
+    return s1_mean, s2_mean
+
+
+def mises_boundary_mean(start, end,
+                         grid_path='case/grid.npz',
+                         disp_path='case/DisplacementResult.npz',
+                         E=200e9, niu=0.3,
+                         link_path='case/boun_link.npz'):
+    """Print length-weighted mean von Mises stress along a boundary segment."""
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    result = _boundary_mean(g, U, E, niu, start, end, link_dict, _mises_at_point)
+    if result is None:
+        print(f"No valid Mises data on boundary ({start}->{end}).")
+        return None
+    print(f"Boundary mean Mises ({start}->{end}):"
+          f" Mises_avg = {result:.6e}")
+    return result
+
+
+# ============================================================
+# Public API — boundary line plot (traversal order, with arrows)
+# ============================================================
+
+def displacement_boundary_line(start, end, x_axis='s',
+                                grid_path='case/grid.npz',
+                                disp_path='case/DisplacementResult.npz',
+                                link_path='case/boun_link.npz'):
+    """
+    Plot displacement components along a boundary segment.
+    x_axis: 's' (arc length) | 'x' | 'y'
+    """
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    def _uv(g, U, x, y, E, niu):
+        uv = interpolate_displacement(g, U, x, y)
+        if uv is None:
+            return None
+        return uv[0], uv[1], np.sqrt(uv[0]**2 + uv[1]**2)
+
+    xs, ys, ss, arrays = _boundary_sample(g, U, 200e9, 0.3,
+                                           start, end, link_dict, _uv)
+    if not arrays or len(arrays) < 3:
+        print(f"No valid data on boundary ({start}->{end}).")
+        return None
+    u_arr, v_arr, mag_arr = arrays
+    fname = f'case/displacement_boundary_{start}_{end}_{x_axis}.png'
+    _boundary_line_plot(start, end, xs, ys, ss,
+                        [u_arr, v_arr, mag_arr],
+                        ['u', 'v', '|u|'],
+                        'Displacement along boundary', fname, x_axis)
+    return u_arr, v_arr, mag_arr
+
+
+def stress_boundary_line(start, end, x_axis='s',
+                          grid_path='case/grid.npz',
+                          disp_path='case/DisplacementResult.npz',
+                          E=200e9, niu=0.3,
+                          link_path='case/boun_link.npz'):
+    """
+    Plot stress components along a boundary segment (step plot: constant per edge).
+    x_axis: 's' (arc length) | 'x' | 'y'
+    """
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    s_starts, s_ends, x0, x1, y0, y1, arrays = _boundary_sample_edge(
+        g, U, E, niu, start, end, link_dict, _stress_at_point)
+    if not arrays or len(arrays) < 3:
+        print(f"No valid data on boundary ({start}->{end}).")
+        return None
+    sx_arr, sy_arr, txy_arr = arrays
+    fname = f'case/stress_boundary_{start}_{end}_{x_axis}.png'
+    _boundary_edge_plot(start, end, s_starts, s_ends, x0, x1, y0, y1,
+                        [sx_arr, sy_arr, txy_arr],
+                        ['sigma_x', 'sigma_y', 'tau_xy'],
+                        'Stress along boundary', fname, x_axis)
+    return sx_arr, sy_arr, txy_arr
+
+
+def principal_stress_boundary_line(start, end, x_axis='s',
+                                    grid_path='case/grid.npz',
+                                    disp_path='case/DisplacementResult.npz',
+                                    E=200e9, niu=0.3,
+                                    link_path='case/boun_link.npz'):
+    """
+    Plot principal stresses along a boundary segment (step plot: constant per edge).
+    x_axis: 's' (arc length) | 'x' | 'y'
+    """
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    s_starts, s_ends, x0, x1, y0, y1, arrays = _boundary_sample_edge(
+        g, U, E, niu, start, end, link_dict, _principal_at_point)
+    if not arrays or len(arrays) < 2:
+        print(f"No valid data on boundary ({start}->{end}).")
+        return None
+    s1_arr, s2_arr = arrays
+    fname = f'case/principal_stress_boundary_{start}_{end}_{x_axis}.png'
+    _boundary_edge_plot(start, end, s_starts, s_ends, x0, x1, y0, y1,
+                        [s1_arr, s2_arr],
+                        ['sigma_1', 'sigma_2'],
+                        'Principal stress along boundary', fname, x_axis)
+    return s1_arr, s2_arr
+
+
+def mises_boundary_line(start, end, x_axis='s',
+                         grid_path='case/grid.npz',
+                         disp_path='case/DisplacementResult.npz',
+                         E=200e9, niu=0.3,
+                         link_path='case/boun_link.npz'):
+    """
+    Plot von Mises stress along a boundary segment (step plot: constant per edge).
+    x_axis: 's' (arc length) | 'x' | 'y'
+    """
+    g, U = _load(grid_path, disp_path)
+    link_dict = _load_link_dict(link_path)
+
+    s_starts, s_ends, x0, x1, y0, y1, arrays = _boundary_sample_edge(
+        g, U, E, niu, start, end, link_dict, _mises_at_point)
+    if not arrays or len(arrays) < 1:
+        print(f"No valid data on boundary ({start}->{end}).")
+        return None
+    mises_arr = arrays[0]
+    fname = f'case/mises_boundary_{start}_{end}_{x_axis}.png'
+    _boundary_edge_plot(start, end, s_starts, s_ends, x0, x1, y0, y1,
+                        [mises_arr],
+                        ['Von Mises'],
+                        'Von Mises along boundary', fname, x_axis)
+    return mises_arr
 
 
 # ============================================================

@@ -11,10 +11,14 @@ Usage examples (uncomment to use):
 from G_get_displacement import load_result, interpolate_displacement
 from H_post_process import (
     displacement_point, displacement_line, displacement_max, displacement_min,
+    displacement_boundary_mean, displacement_boundary_line,
     stress_point, stress_line, stress_max, stress_min, stress_absmin,
+    stress_boundary_mean, stress_boundary_line,
     principal_stress_point, principal_stress_line,
     principal_stress_max, principal_stress_min, principal_stress_absmin,
+    principal_stress_boundary_mean, principal_stress_boundary_line,
     mises_point, mises_line, mises_max, mises_min, mises_absmin,
+    mises_boundary_mean, mises_boundary_line,
     run_all,
 )
 
@@ -28,7 +32,7 @@ y=0
 # --- Basic displacement interpolation (original test) ---
 g, U = load_result(GRID, DISP)
 u, v = interpolate_displacement(g, U, x, y)
-print(u, v)
+#print(u, v)
 
 print()
 print("=" * 60)
@@ -122,6 +126,50 @@ mises_min(GRID, DISP, E, niu)
 # mises_absmin(GRID, DISP, E, niu)
 print()
 mises_absmin(GRID, DISP, E, niu)
+
+# =================================================================
+# Boundary mean (length-weighted) — boundary segment via linked list
+# =================================================================
+
+# boundary segments defined in W_give_BC:  0→112 (top edge), 32→1 (right edge)
+BND_START = 0   # top edge start
+BND_END   = 112  # top edge end
+
+# displacement_boundary_mean(BND_START, BND_END, GRID, DISP)
+print()
+displacement_boundary_mean(BND_START, BND_END, GRID, DISP)
+
+# stress_boundary_mean(BND_START, BND_END, GRID, DISP, E, niu)
+print()
+stress_boundary_mean(BND_START, BND_END, GRID, DISP, E, niu)
+
+# principal_stress_boundary_mean(BND_START, BND_END, GRID, DISP, E, niu)
+print()
+principal_stress_boundary_mean(BND_START, BND_END, GRID, DISP, E, niu)
+
+# mises_boundary_mean(BND_START, BND_END, GRID, DISP, E, niu)
+print()
+mises_boundary_mean(BND_START, BND_END, GRID, DISP, E, niu)
+
+# =================================================================
+# Boundary line plots — x-axis: s (arc length), x, or y; with arrows
+# =================================================================
+
+# displacement_boundary_line(BND_START, BND_END, 's', GRID, DISP)
+print()
+displacement_boundary_line(BND_START, BND_END, 's', GRID, DISP)
+
+# stress_boundary_line(BND_START, BND_END, 's', GRID, DISP, E, niu)
+print()
+stress_boundary_line(BND_START, BND_END, 's', GRID, DISP, E, niu)
+
+# principal_stress_boundary_line(BND_START, BND_END, 's', GRID, DISP, E, niu)
+print()
+principal_stress_boundary_line(BND_START, BND_END, 's', GRID, DISP, E, niu)
+
+# mises_boundary_line(BND_START, BND_END, 's', GRID, DISP, E, niu)
+print()
+mises_boundary_line(BND_START, BND_END, 's', GRID, DISP, E, niu)
 
 # =================================================================
 # Convenience: run everything at once

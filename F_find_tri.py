@@ -3,21 +3,21 @@ import math
 EPS = 1e-12
 
 # ============================================================
-# 几何判断工具
+# Geometry utilities
 # ============================================================
 def point_is_vertex(px, py, vx, vy):
-    """判断点是否与三角格点重合"""
+    """Check if point coincides with a mesh vertex"""
     return (px - vx) ** 2 + (py - vy) ** 2 < EPS ** 2
 
 
 def point_on_segment(px, py, x1, y1, x2, y2):
-    """判断点是否落在线段上（含端点）"""
+    """Check if point lies on a line segment (including endpoints)"""
     dx = x2 - x1
     dy = y2 - y1
 
     seg_len2 = dx * dx + dy * dy
     if seg_len2 < EPS ** 2:
-        return False  # 退化线段（你说不会存在）
+        return False  # degenerate segment (should not exist)
 
     t = ((px - x1) * dx + (py - y1) * dy) / seg_len2
     if t < -EPS or t > 1.0 + EPS:
@@ -31,8 +31,8 @@ def point_on_segment(px, py, x1, y1, x2, y2):
 
 def point_to_segment_distance(px, py, x1, y1, x2, y2):
     """
-    点到线段的距离
-    ⚠️ 前提：已排除“点是顶点”和“点在线段上”
+    Distance from point to line segment.
+    Assumes: point is not a vertex and not on the segment (checked beforehand).
     """
     dx = x2 - x1
     dy = y2 - y1
@@ -47,7 +47,7 @@ def point_to_segment_distance(px, py, x1, y1, x2, y2):
 
 
 def point_in_triangle(px, py, v1, v2, v3):
-    """重心坐标法判断点是否在三角形内"""
+    """Check if point is inside triangle using barycentric coordinates"""
     x1, y1 = v1.x, v1.y
     x2, y2 = v2.x, v2.y
     x3, y3 = v3.x, v3.y
@@ -66,16 +66,18 @@ def point_in_triangle(px, py, v1, v2, v3):
 
 
 # ============================================================
-# 核心：找点所属三角形（你的完整思路）
+# Core: find which triangle contains a given point
 # ============================================================
 def find_triangle_of_point(graph, px, py):
     """
-    1. 先判断是否是三角格点
-    2. 找最近顶点
-    3. 在邻居中找最近边
-    4. 候选三角形中二选一
+    Algorithm:
+    1. Check if point is a mesh vertex
+    2. Find the nearest vertex
+    3. Find the nearest edge among that vertex's neighbors
+    4. Among the 1-2 candidate triangles sharing that edge, pick the one
+       containing the point (barycentric test)
     """
-    # ---- 1. 是否是顶点 ----
+    # ---- 1. check if point is a vertex ----
     for v in graph.vertices:
         if point_is_vertex(px, py, v.x, v.y):
             for tri in graph.triangles:
@@ -83,13 +85,13 @@ def find_triangle_of_point(graph, px, py):
                 if v.idx in (i1, i2, i3):
                     return tri
 
-    # ---- 2. 最近顶点 ----
+    # ---- 2. nearest vertex ----
     nearest_v = min(
         graph.vertices,
         key=lambda v: (v.x - px) ** 2 + (v.y - py) ** 2
     )
 
-    # ---- 3. 最近邻边 ----
+    # ---- 3. nearest neighboring edge ----
     best_nb = None
     best_dist = float("inf")
 
@@ -105,14 +107,14 @@ def find_triangle_of_point(graph, px, py):
             best_dist = dist
             best_nb = nb
 
-    # ---- 4. 候选三角形 ----
+    # ---- 4. candidate triangles sharing the edge ----
     vi, vj = nearest_v.idx, best_nb.idx
     candidate_tris = [
         tri for tri in graph.triangles
         if vi in tri[:3] and vj in tri[:3]
     ]
 
-    # ---- 5. 二选一 ----
+    # ---- 5. pick the one containing the point ----
     for tri in candidate_tris:
         i1, i2, i3, *_ = tri
         v1 = graph.vertices[i1]

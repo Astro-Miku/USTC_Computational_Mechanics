@@ -7,7 +7,7 @@ class BC:
     def __init__(self, verts):
         ids = {vert.idx for vert in verts}
         self.len = len(ids)
-        self.kind = {nid: [2, 2] for nid in ids}        # 1=位移, 2=力
+        self.kind = {nid: [2, 2] for nid in ids}        # 1=displacement, 2=force
         self.boundary = {nid: [0.0, 0.0] for nid in ids}
 
     def BC_def(self, start, end, constrain_x=1, constrain_y=1):
@@ -38,9 +38,9 @@ class BC:
             kx, ky = self.kind[p]
             if kx == 1 or ky == 1:
                 val_x, val_y = funct(vp.x, vp.y)
-                if kx == 1:  # x方向是位移边界
+                if kx == 1:  # x-direction has displacement BC
                     self.boundary[p][0] = val_x
-                if ky == 1:  # y方向是位移边界
+                if ky == 1:  # y-direction has displacement BC
                     self.boundary[p][1] = val_y
             if kx == 2 or ky == 2:
                 mid_x = (vp.x + vq.x) / 2.0
@@ -127,11 +127,15 @@ boundary = BC(verts)
 
 # USER
 #==================================================================================================
-boundary.BC_def(16, 2,constrain_x=1,constrain_y=1)
+boundary.BC_def(32, 1,constrain_x=1,constrain_y=1)
+boundary.BC_def(157, 143,constrain_x=1,constrain_y=1)
 #boundary.BC_def(0, 0,constrain_x=1,constrain_y=1) 
 def funct1(x, y):
-    return [0, -10]
-boundary.Value_def(874, 895, g, funct1)
+    return [0, -500]
+def funct2(x, y):
+    return [0, -300]
+boundary.Value_def(0, 112, g, funct1)
+boundary.Value_def(67, 67, g, funct2)
 #boundary.Value_def(85, 85, g, funct2)
 boundary.save('case/Boun_Cond.npz')
 #==================================================================================================
@@ -150,25 +154,25 @@ import matplotlib.pyplot as plt
 def visualize_bc(graph, bc):
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    # --- 画网格边界 ---
+    # --- draw mesh boundary ---
     for e in graph.edges:
         if e.is_boundary:
             v1, v2 = e.vertex
             ax.plot([v1.x, v2.x], [v1.y, v2.y],
                     color='lightgray', lw=0.8)
 
-    # --- 画 BC ---
+    # --- draw boundary conditions ---
     for v in graph.vertices:
         x, y = v.x, v.y
         kx, ky = data['Kind'][v.idx]
         bx, by = data['Boundary'][v.idx]
         #print(v.idx,'kind ',kx,ky,'BC ',bx,by)
 
-        # 位移约束
+        # displacement constraint
         if kx == 1 and ky == 1:
             ax.scatter(x, y, color='red', s=30, zorder=5)
 
-        # 力边界
+        # force boundary
         if kx == 2 or ky == 2:
             if abs(bx) > 1e-8 or abs(by) > 1e-8:
                 ax.quiver(

@@ -7,18 +7,8 @@ def calcu_cell(graph,E,niu,is_force):
     for i in range(lentri):
         single_matrix=vertex_force(graph,i,E,niu,is_force)
         """
-            target: assemble
-            
-            force:  6×6
-              ↓
-            place:
-                    2*i1        2*i1+1      2*i2        2*i2+1      2*i3        2*i3+1
-            2*i1      *           *           *           *           *           *
-            2*i1+1    *           *           *           *           *           *
-            2*i2      *           *           *           *           *           *
-            2*i2+1    *           *           *           *           *           *
-            2*i3      *           *           *           *           *           *
-            2*i3+1    *           *           *           *           *           *
+            Assemble 6x6 element stiffness matrix into global matrix.
+            Each 2x2 block maps to DOF pairs (2*i, 2*j) for vertices i1,i2,i3.
         """
         i1, i2, i3, _, _, _=graph.triangles[i]
         graph.vertices[i1].matrix_info[i1]+=single_matrix[0:2,0:2]
@@ -62,7 +52,7 @@ def build_whole(graph):
             cols_list.append(cols)
             data_list.append(vals)
     
-    # 合并所有数据
+    # merge all data
     if rows_list:
         rows = np.concatenate(rows_list)
         cols = np.concatenate(cols_list)

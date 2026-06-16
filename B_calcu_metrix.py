@@ -28,7 +28,7 @@ def LN(N):
     return B
 
 def getD(E,niu,is_stress):
-    if is_stress==0: #0 应变 1 应力
+    if is_stress==0: # 0 = plane strain, 1 = plane stress
         E,niu=E/(1-niu*niu),niu/(1-niu)
     D = E/(1-niu**2) * np.array([
         [1, niu, 0],
@@ -47,7 +47,7 @@ def edge_force(graph,tri_idx,E,niu,is_stress):
     v1_idx,v2_idx,v3_idx,e12_idx,e23_idx,e31_idx=tri
     v1,v2,v3=graph.vertices[v1_idx],graph.vertices[v2_idx],graph.vertices[v3_idx]
     e12,e23,e31=graph.edges[e12_idx],graph.edges[e23_idx],graph.edges[e31_idx]
-    DB=getD(E,niu,is_stress)@LN(N_ijk(v1,v2,v3))
+    DB=np.dot(getD(E,niu,is_stress), LN(N_ijk(v1,v2,v3)))
     outnormal=[normal(v1,v2),normal(v2,v3),normal(v3,v1)]
     edge_force_trans=np.array([
         [outnormal[0][0]*e12.length, 0                         , outnormal[0][1]*e12.length],        #12-x
@@ -57,7 +57,7 @@ def edge_force(graph,tri_idx,E,niu,is_stress):
         [outnormal[2][0]*e31.length, 0                         , outnormal[2][1]*e31.length],        #31-x
         [0                         , outnormal[2][1]*e31.length, outnormal[2][0]*e31.length],        #31-y
     ])
-    return edge_force_trans@DB
+    return np.dot(edge_force_trans, DB)
 def vertex_force(graph,tri_idx,E,niu,is_stress):
     edge_matrix=edge_force(graph,tri_idx,E,niu,is_stress)
     vertex_trans=np.array([
@@ -68,4 +68,4 @@ def vertex_force(graph,tri_idx,E,niu,is_stress):
         [0  , 0  , 0.5, 0  , 0.5, 0  ],         #3-x
         [0  , 0  , 0  , 0.5, 0  , 0.5],         #3-y
     ])
-    return vertex_trans@edge_matrix
+    return np.dot(vertex_trans, edge_matrix)

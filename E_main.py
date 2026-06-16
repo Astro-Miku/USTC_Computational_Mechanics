@@ -10,13 +10,13 @@ from D_give_boundary import apply_displacement_constraints
 from Y_get_info import load_grid_from_npz
 
 def solve_five_point():
-    # 1. 网格
+    # 1. load mesh
     npz_file = "case/grid.npz"
     verts, tris = load_grid_from_npz(npz_file)
     g = Graph(verts)
     g.build(tris)
 
-    # 2. 单元刚度
+    # 2. element stiffness matrix
     E, nu = 200e9, 0.3
     BCfile = "case/Boun_Cond.npz"
 
@@ -25,21 +25,21 @@ def solve_five_point():
     )
     U = spsolve(K, F)
 
-    # 3. 准备数据
+    # 3. extract data for plotting
     bc_data = np.load(BCfile, allow_pickle=True)
     kind = bc_data['Kind']
     boundary = bc_data['Boundary']
     
-    # 提取坐标和位移
+    # extract coordinates and displacements
     x_coords = [v.x for v in g.vertices]
     y_coords = [v.y for v in g.vertices]
     u_disp = [U[2*i] for i in range(len(g.vertices))]
     v_disp = [U[2*i+1] for i in range(len(g.vertices))]
     
-    # 4. 创建三个图
+    # 4. create plots
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     """
-    # 图1: 位移矢量图（已有）
+    # Plot 1: displacement vector field
     ax1 = axes[0]
     for i1, i2, i3, _, _, _ in g.triangles:
         v1, v2, v3 = g.vertices[i1], g.vertices[i2], g.vertices[i3]
@@ -55,12 +55,12 @@ def solve_five_point():
         kx, ky = kind[i]
         bx, by = boundary[i]
         
-        # 位移约束点（红色）
+        # displacement-constrained nodes (red)
         if kx == 1 and ky == 1:
             ax1.scatter(x, y, color='black', s=3, zorder=5)
         elif kx==1 or ky==1:
             ax1.scatter(x, y, color='red', s=3, zorder=5)
-        # 力边界点（蓝色箭头）
+        # force boundary nodes (blue arrows)
         if kx == 2 or ky == 2:
             if abs(bx) > 1e-8 or abs(by) > 1e-8:
                 ax1.quiver(
@@ -72,7 +72,7 @@ def solve_five_point():
             else:
                 ax1.scatter(x, y, color='green', s=1, zorder=4)
         
-        # 绘制位移矢量
+        # draw displacement vectors
         if abs(ux) > 1e-10 or abs(uy) > 1e-10:
             ax1.quiver(
                 x, y,
@@ -87,20 +87,20 @@ def solve_five_point():
     ax1.set_title('Displacement Vectors')
     ax1.grid(True, alpha=0.3)
 
-    # ✅ 新增：扩大坐标范围
+    # ✅ New: expand coordinate range for better visibility
     x_min, x_max = min(x_coords), max(x_coords)
     y_min, y_max = min(y_coords), max(y_coords)
     ax1.set_xlim(x_min - 0.1*(x_max-x_min), x_max + 0.15*(x_max-x_min))
     ax1.set_ylim(y_min - 0.1*(y_max-y_min), y_max + 0.15*(y_max-y_min))
     """
-    # 图2: u场（x方向位移）
+    # Plot 2: u displacement field (x-direction)
     ax2 = axes[0]
     
-    # 创建三角剖分
+    # create triangulation
     triangles = np.array([[t[0], t[1], t[2]] for t in g.triangles])
     triang = tri.Triangulation(x_coords, y_coords, triangles)
     
-    # 绘制u场
+    # plot u displacement field
     tpc_u = ax2.tripcolor(triang, u_disp, cmap='viridis', shading='gouraud')
     plt.colorbar(tpc_u, ax=ax2, label='u displacement')
     
@@ -109,10 +109,10 @@ def solve_five_point():
     ax2.set_ylabel('Y')
     ax2.set_title('Displacement u (x-direction)')
     
-    # 图3: v场（y方向位移）
+    # Plot 3: v displacement field (y-direction)
     ax3 = axes[1]
     
-    # 绘制v场
+    # plot v displacement field
     tpc_v = ax3.tripcolor(triang, v_disp, cmap='viridis', shading='gouraud')
     plt.colorbar(tpc_v, ax=ax3, label='v displacement')
     

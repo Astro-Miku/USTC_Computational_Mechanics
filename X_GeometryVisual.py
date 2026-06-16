@@ -60,6 +60,7 @@ for edge in g.edges:
 boun_g.edges = boun_edges
 
 def extract_all_loops(graph):
+    """Extract all boundary loops from the graph."""
     neighbors = defaultdict(list)
     for edge in graph.edges:
         if edge.is_boundary:
@@ -102,37 +103,37 @@ def extract_all_loops(graph):
     return loops
 
 def visualize_and_save(graph, loops):
-    """可视化环并保存数据"""
+    """Visualize boundary loops and save data to files."""
     fig, ax = plt.subplots(figsize=(10, 10))
     
     colors = plt.cm.tab10(np.linspace(0, 1, max(len(loops), 1)))
-    
-    # 绘制每个环
+
+    # draw each loop
     for i, loop_order in enumerate(loops):
         xs = [graph.vertices[idx].x for idx in loop_order]
         ys = [graph.vertices[idx].y for idx in loop_order]
-        xs.append(xs[0])  # 闭合环
+        xs.append(xs[0])  # close the loop
         ys.append(ys[0])
-        
-        # 绘制环
+
+        # draw the loop
         ax.plot(xs, ys, '-', linewidth=2, marker='o', markersize=6, 
                markerfacecolor=colors[i], label=f'Loop {i}', color=colors[i])
         
-        # 标注顶点索引
+        # annotate vertex indices
         for idx in loop_order:
             v = graph.vertices[idx]
             ax.annotate(f'{idx}', (v.x, v.y), 
                        xytext=(3, 3), textcoords='offset points',
                        fontsize=3, fontweight='bold')
         
-        # 标注方向（箭头）
+        # annotate direction (arrows)
         for j in range(len(loop_order)-1):
             x1, y1 = graph.vertices[loop_order[j]].x, graph.vertices[loop_order[j]].y
             x2, y2 = graph.vertices[loop_order[j+1]].x, graph.vertices[loop_order[j+1]].y
             ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
                        arrowprops=dict(arrowstyle='->', color=colors[i], lw=1.5, alpha=0.7))
     
-    # 设置图形属性
+    # set up plot appearance
     ax.set_aspect('equal', adjustable='box')
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
@@ -142,35 +143,35 @@ def visualize_and_save(graph, loops):
     if loops:
         ax.legend()
     
-    # 保存图片
+    # save plot to file
     plt.savefig('case/boundary.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    # 准备存储数据
+    # prepare data for saving
     nlink = len(loops)
-    head = [loop[0] for loop in loops]  # 每个环的起始顶点
+    head = [loop[0] for loop in loops]  # starting vertex of each loop
     link_data = []
 
     for loop in loops:
         n = len(loop)
-        # 只保存到最后一个元素，不再连回 head
+        # only save up to the last element, do not link back to head
         for i in range(n - 1):
             current_idx = loop[i]
             next_idx = loop[i + 1]
             link_data.append([current_idx, next_idx])
     
-    # 转换为numpy数组
+    # convert to numpy arrays
     head_array = np.array(head)
     link_array = np.array(link_data)
     
-    # 保存为npz文件
+    # save to npz file
     np.savez('case/boun_link.npz', 
              nlink=nlink,
              head=head_array,
              link=link_array)
     """
-    print(f"检测到 {nlink} 个环:")
-    print(f"\n已保存 boundary.png 和 boun_link.npz")
+    print(f"Detected {nlink} loops:")
+    print(f"\nSaved boundary.png and boun_link.npz")
     print(f"nlink = {nlink}")
     print(f"head = {head_array}")
     print(f"link = {link_array}")
@@ -178,6 +179,6 @@ def visualize_and_save(graph, loops):
     
     return head_array, link_array
 
-# ========== 执行 ==========
+# ========== Execute ==========
 loops = extract_all_loops(boun_g)
 head_array, link_array = visualize_and_save(boun_g, loops)

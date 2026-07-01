@@ -157,7 +157,7 @@ mises_boundary_mean(BND_START, BND_END, GRID, DISP, E, niu)
 
 # displacement_boundary_line(BND_START, BND_END, 's', GRID, DISP)
 print()
-displacement_boundary_line(BND_START, BND_END, 's', GRID, DISP)
+displacement_boundary_line(BND_START, BND_END, 'x', GRID, DISP)
 
 # stress_boundary_line(BND_START, BND_END, 's', GRID, DISP, E, niu)
 print()
